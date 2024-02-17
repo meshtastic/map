@@ -4,19 +4,14 @@ import { MapContext } from "./providers/MapProvider.jsx";
 import { CurrentViewContext } from "./providers/SceneViewProvider.jsx";
 import MapConstructor from "@arcgis/core/Map.js";
 import MapView from "@arcgis/core/views/MapView.js";
-import VectorTileLayer from "@arcgis/core/layers/VectorTileLayer.js";
 import Point from "@arcgis/core/geometry/Point.js";
 import TileInfo from "@arcgis/core/layers/support/TileInfo.js";
 import ScaleBar from "@arcgis/core/widgets/ScaleBar.js";
 import Search from "@arcgis/core/widgets/Search.js";
-import CSVLayer from "@arcgis/core/layers/CSVLayer.js";
-import LayerSearchSource from "@arcgis/core/widgets/Search/LayerSearchSource.js";
-import TimeSlider from "@arcgis/core/widgets/TimeSlider.js";
 import Track from "@arcgis/core/widgets/Track.js";
 import Compass from "@arcgis/core/widgets/Compass.js";
 import CoordinateConversion from "@arcgis/core/widgets/CoordinateConversion.js";
 import Fullscreen from "@arcgis/core/widgets/Fullscreen.js";
-import WebTileLayer from "@arcgis/core/layers/WebTileLayer.js";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer.js";
 import Graphic from "@arcgis/core/Graphic.js";
 import SimpleMarkerSymbol from "@arcgis/core/symbols/SimpleMarkerSymbol.js";
@@ -28,13 +23,6 @@ export interface IntitalizeMapProps {
 }
 
 export const IntitalizeMap: Component<IntitalizeMapProps> = (props) => {
-  interface MapPoint {
-    name: string;
-    origin: Point;
-  }
-
-  const [mapPoints, setMapPoints] = createSignal<MapPoint[]>();
-
   const map = new MapConstructor({
     basemap: "satellite",
   });
@@ -94,106 +82,75 @@ export const IntitalizeMap: Component<IntitalizeMapProps> = (props) => {
     currentView().ui.add(compass, "top-left");
     currentView().ui.add(coordinateConversion, "bottom-right");
     currentView().ui.add(fullscreen, "top-right");
-
-    const cepGraphicsLayer = new GraphicsLayer({
-      id: "cep",
-    });
-
-    map.add(cepGraphicsLayer);
-
-    currentView()?.when(() => {
-      console.log("scene view ready");
-    });
   };
 
-  interface Gateway {
-    id: string;
-    latitude?: number;
-    longitude?: number;
-    createdAt: string;
-    updatedAt: string;
-    channels: Channel[];
-  }
+  const graphicsLayer = new GraphicsLayer({
+    id: "gateway graphics layer",
+    title: "Gateways",
+  });
 
-  interface Channel {
-    id: string;
-    name: string;
-    encrypted: boolean;
-    messages: number;
-    createdAt: string;
-    updatedAt: string;
-    gatewayId: string;
-  }
-
-  const graphicsLayer = new GraphicsLayer();
   map.add(graphicsLayer);
 
   const { gatewayStream } = useClient(GatewayService)();
   const [gatewayStreamResponse] = createResource(() => gatewayStream({}));
 
-  // const [gateways, setGateways] = createSignal<Gateway[]>([]);
-
   (async () => {
     for await (const gatewayResponse of gatewayStreamResponse() ?? []) {
-      for (const gateway of gatewayResponse.gateways) {
-        // setGateways([...gateways(), gateway]);
+      const gateway = gatewayResponse.gateway;
+      if (gateway?.latitude && gateway.longitude) {
+        console.log(
+          "adding gateway",
+          gateway.id,
+          `at location: ${gateway.latitude}, ${gateway.longitude}`,
+        );
 
-        if (gateway.latitude && gateway.longitude) {
-          console.log(
-            "adding gateway",
-            gateway.id,
-            `at location: ${gateway.latitude}, ${gateway.longitude}`,
-          );
+        const point = new Point({
+          latitude: gateway.latitude / 1e7,
+          longitude: gateway.longitude / 1e7,
+        });
+        const symbol = new SimpleMarkerSymbol({
+          color: [226, 119, 40],
+          outline: {
+            color: [255, 255, 255],
+            width: 1,
+          },
+        });
 
-          const point = new Point({
-            latitude: gateway.latitude,
-            longitude: gateway.longitude,
-          });
-          const symbol = new SimpleMarkerSymbol({
-            color: [226, 119, 40],
-            outline: {
-              color: [255, 255, 255],
-              width: 1,
-            },
-          });
+        const graphic = new Graphic({
+          geometry: point,
+          symbol: symbol,
+          attributes: {
+            name: gateway.id,
+            channels: gateway.channels.map((channel) => channel.name),
+          },
+          popupTemplate: {
+            title: "{name}",
+            content: [
+              {
+                type: "fields",
+                fieldInfos: [
+                  {
+                    fieldName: "name",
+                  },
+                  {
+                    fieldName: "channels",
+                  },
+                ],
+              },
+            ],
+            actions: [
+              {
+                type: "toggle",
+                title: "Subscribe to channel",
+                value: true,
+              },
+            ],
+          },
+        });
 
-          const graphic = new Graphic({
-            geometry: point,
-            symbol: symbol,
-            attributes: {
-              Name: gateway.id,
-              Channels: gateway.channels.map((channel) => channel.name),
-            },
-            popupTemplate: {
-              title: "{Name}",
-              content: [
-                {
-                  type: "fields",
-                  fieldInfos: [
-                    {
-                      fieldName: "Name",
-                    },
-                    {
-                      fieldName: "Channels",
-                    },
-                  ],
-                },
-              ],
-              actions: [
-                {
-                  type: "toggle",
-                  title: "Subscribe to channel",
-                  value: true,
-                },
-              ],
-            },
-          });
-
-          //add to map
-          graphicsLayer.add(graphic);
-        }
+        //add to map
+        graphicsLayer.add(graphic);
       }
-      // console.log(gateways());
     }
   })();
 
