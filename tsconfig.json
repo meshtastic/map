@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "types": [
+      "vite/client",
+    ],
+    "noEmit": true,
+    "isolatedModules": true,
+    "strict": true,
+    "baseUrl": "."
+  }
+}
