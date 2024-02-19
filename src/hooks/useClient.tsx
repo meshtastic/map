@@ -6,7 +6,7 @@ import type { Accessor } from "solid-js";
 import { createMemo } from "solid-js";
 
 const transport = createConnectTransport({
-  baseUrl: `http://${import.meta.env.VITE_RPC_URL}`,
+  baseUrl: import.meta.env.VITE_RPC_URL,
   useBinaryFormat: true,
   credentials: "include",
 });
