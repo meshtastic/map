@@ -1,164 +1,173 @@
 import type { Component, JSXElement } from "solid-js";
-import { createResource, createSignal } from "solid-js";
+import { createEffect, createResource, createSignal } from "solid-js";
 import { MapContext } from "./providers/MapProvider.jsx";
-import { CurrentViewContext } from "./providers/SceneViewProvider.jsx";
-import MapConstructor from "@arcgis/core/Map.js";
-import MapView from "@arcgis/core/views/MapView.js";
-import Point from "@arcgis/core/geometry/Point.js";
-import TileInfo from "@arcgis/core/layers/support/TileInfo.js";
-import ScaleBar from "@arcgis/core/widgets/ScaleBar.js";
-import Search from "@arcgis/core/widgets/Search.js";
-import Track from "@arcgis/core/widgets/Track.js";
-import Compass from "@arcgis/core/widgets/Compass.js";
-import CoordinateConversion from "@arcgis/core/widgets/CoordinateConversion.js";
-import Fullscreen from "@arcgis/core/widgets/Fullscreen.js";
-import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer.js";
-import Graphic from "@arcgis/core/Graphic.js";
-import SimpleMarkerSymbol from "@arcgis/core/symbols/SimpleMarkerSymbol.js";
 import { useClient } from "./hooks/useClient.jsx";
 import { GatewayService } from "@buf/meshtastic_api.connectrpc_es/protobufs/gateway/v1/gateway_service_connect.js";
+import { useStore } from "./hooks/useStore.jsx";
+import { Map as maplibregl } from "maplibre-gl";
+import type { GeoJSONSource } from "maplibre-gl";
 
 export interface IntitalizeMapProps {
   children?: JSXElement;
 }
 
 export const IntitalizeMap: Component<IntitalizeMapProps> = (props) => {
-  const map = new MapConstructor({
-    basemap: "satellite",
-  });
-
-  const [currentView, setCurrentView] = createSignal<MapView>(new MapView());
   const [mapRef, setMapRef] = createSignal<HTMLDivElement>();
+  const { localState } = useStore();
+  const [geoJson, setGeoJson] = createSignal<GeoJSON.GeoJSON>();
+  const [currentView, setCurrentView] = createSignal<maplibregl | undefined>(
+    undefined,
+  );
+
+  createEffect(() => {
+    const data: GeoJSON.GeoJSON = {
+      type: "FeatureCollection",
+      features: localState.gateways.map((gateway) => {
+        return {
+          type: "Feature",
+          properties: {
+            id: gateway.id,
+            age: (Date.now() - gateway.updatedAt.toDate().getTime()) / 1000,
+          },
+          geometry: {
+            type: "Point",
+            coordinates: [gateway.longitude / 1e7, gateway.latitude / 1e7, 0],
+          },
+        };
+      }),
+    };
+    setGeoJson(data);
+  });
 
   const initializeMap = () => {
-    setCurrentView(
-      new MapView({
-        map,
-        container: mapRef(),
-        center: new Point({
-          latitude: -28,
-          longitude: 135,
-        }),
-        scale: 10000000,
-        constraints: {
-          lods: TileInfo.create().lods,
+    const map = new maplibregl({
+      container: mapRef(),
+      style: `https://api.protomaps.com/styles/v2/dark.json?key=${
+        import.meta.env.VITE_PROTOMAPS_API_KEY
+      }`,
+    });
+
+    setCurrentView(map);
+
+    map.on("load", () => {
+      map.addSource("gateways", {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [],
         },
-      }),
-    );
+      });
 
-    const scalebar = new ScaleBar({
-      view: currentView(),
-      unit: "metric",
+      map.addLayer({
+        id: "gateways-point",
+        type: "circle",
+        source: "gateways",
+        minzoom: 7,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": [
+            "interpolate",
+            ["linear"],
+            ["get", "age"],
+            60,
+            "rgba(33,102,172,0)",
+            60 * 10,
+            "rgb(103,169,207)",
+            60 * 60,
+            "rgb(209,229,240)",
+            60 * 60 * 24,
+            "rgb(253,219,199)",
+            60 * 60 * 24 * 7,
+            "rgb(239,138,98)",
+            60 * 60 * 24 * 30,
+            "rgb(178,24,43)",
+          ],
+          "circle-stroke-color": "white",
+          "circle-stroke-width": 1,
+          "circle-opacity": 1,
+        },
+      });
+
+      map.addLayer({
+        id: "gateways-heat",
+        type: "heatmap",
+        source: "gateways",
+        maxzoom: 9,
+        paint: {
+          // Increase the heatmap weight based on frequency and property magnitude
+          "heatmap-weight": [
+            "interpolate",
+            ["linear"],
+            ["get", "age"],
+            0,
+            1,
+            60 * 60 * 24 * 30,
+            0,
+          ],
+          // Increase the heatmap color weight weight by zoom level
+          // heatmap-intensity is a multiplier on top of heatmap-weight
+          "heatmap-intensity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            0,
+            1,
+            9,
+            3,
+          ],
+          // Color ramp for heatmap.  Domain is 0 (low) to 1 (high).
+          // Begin color ramp at 0-stop with a 0-transparancy color
+          // to create a blur-like effect.
+          "heatmap-color": [
+            "interpolate",
+            ["linear"],
+            ["heatmap-density"],
+            0,
+            "rgba(33,102,172,0)",
+            0.2,
+            "rgb(103,169,207)",
+            0.4,
+            "rgb(209,229,240)",
+            0.6,
+            "rgb(253,219,199)",
+            0.8,
+            "rgb(239,138,98)",
+            1,
+            "rgb(178,24,43)",
+          ],
+          // Adjust the heatmap radius by zoom level
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, 2, 9, 20],
+          // Transition from heatmap to circle layer by zoom level
+          "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 7, 1, 9, 0],
+        },
+      });
     });
-
-    const search = new Search({
-      view: currentView(),
-      sources: [],
-      includeDefaultSources: false,
-    });
-
-    const track = new Track({
-      view: currentView(),
-      scale: 2500,
-    });
-
-    const compass = new Compass({
-      view: currentView(),
-    });
-
-    const coordinateConversion = new CoordinateConversion({
-      view: currentView(),
-      // @ts-ignore - this is a bug in the typings
-      conversions: ["mgrs"],
-    });
-
-    const fullscreen = new Fullscreen({
-      view: currentView(),
-    });
-
-    currentView().ui.add(scalebar, "bottom-left");
-    currentView().ui.add(search, "top-right");
-    currentView().ui.add(track, "top-left");
-    currentView().ui.add(compass, "top-left");
-    currentView().ui.add(coordinateConversion, "bottom-right");
-    currentView().ui.add(fullscreen, "top-right");
   };
-
-  const graphicsLayer = new GraphicsLayer({
-    id: "gateway graphics layer",
-    title: "Gateways",
-  });
-
-  map.add(graphicsLayer);
 
   const { gatewayStream } = useClient(GatewayService)();
   const [gatewayStreamResponse] = createResource(() => gatewayStream({}));
+  const { addGateway } = useStore();
 
   (async () => {
     for await (const gatewayResponse of gatewayStreamResponse() ?? []) {
       const gateway = gatewayResponse.gateway;
-      if (gateway?.latitude && gateway.longitude) {
-        console.log(
-          "adding gateway",
-          gateway.id,
-          `at location: ${gateway.latitude}, ${gateway.longitude}`,
-        );
-
-        const point = new Point({
-          latitude: gateway.latitude / 1e7,
-          longitude: gateway.longitude / 1e7,
-        });
-        const symbol = new SimpleMarkerSymbol({
-          color: [226, 119, 40],
-          outline: {
-            color: [255, 255, 255],
-            width: 1,
-          },
-        });
-
-        const graphic = new Graphic({
-          geometry: point,
-          symbol: symbol,
-          attributes: {
-            name: gateway.id,
-            channels: gateway.channels.map((channel) => channel.name),
-          },
-          popupTemplate: {
-            title: "{name}",
-            content: [
-              {
-                type: "fields",
-                fieldInfos: [
-                  {
-                    fieldName: "name",
-                  },
-                  {
-                    fieldName: "channels",
-                  },
-                ],
-              },
-            ],
-            actions: [
-              {
-                type: "toggle",
-                title: "Subscribe to channel",
-                value: true,
-              },
-            ],
-          },
-        });
-
-        //add to map
-        graphicsLayer.add(graphic);
+      if (gateway) {
+        addGateway(gateway);
       }
+
+      const layer = currentView()?.getSource("gateways") as GeoJSONSource;
+
+      layer?.setData(geoJson());
     }
+
+    await Promise.resolve();
   })();
 
   return (
-    <MapContext.Provider value={{ map, setMapRef, initializeMap }}>
-      <CurrentViewContext.Provider value={currentView}>
-        {props.children}
-      </CurrentViewContext.Provider>
+    <MapContext.Provider value={{ setMapRef, initializeMap }}>
+      {/* <CurrentViewContext.Provider value={currentView}> */}
+      {props.children}
+      {/* </CurrentViewContext.Provider> */}
     </MapContext.Provider>
   );
 };
