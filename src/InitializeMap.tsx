@@ -142,6 +142,29 @@ export const IntitalizeMap: Component<IntitalizeMapProps> = (props) => {
         },
       });
     });
+
+    map.on("click", "gateways-point", (e) => {
+      const feature = e.features?.[0];
+
+      if (feature?.geometry.type === "Point") {
+        const coordinates = {
+          lat: feature.geometry.coordinates[1],
+          lng: feature.geometry.coordinates[0],
+        };
+
+        if (map.getZoom() < 9) {
+          map.flyTo({
+            center: coordinates,
+            zoom: 15,
+          });
+        }
+        if (map.getZoom() > 9) {
+          map.flyTo({
+            center: coordinates,
+          });
+        }
+      }
+    });
   };
 
   const { gatewayStream } = useClient(GatewayService)();
